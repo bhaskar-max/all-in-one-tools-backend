@@ -19,25 +19,24 @@ app.get("/", (req, res) => {
 });
 
 // =====================================================
-// 🔐 FILE ENCRYPTION / DECRYPTION TOOL (UNCHANGED)
+// 🔐 FILE ENCRYPTION / DECRYPTION TOOL
 // =====================================================
 app.post("/api/encrypt", upload.single("file"), (req, res) => {
   try {
-    const algorithm = "aes-256-cbc";
     const key = crypto.createHash("sha256").update(req.body.key).digest();
     const iv = crypto.randomBytes(16);
-
     const input = fs.createReadStream(req.file.path);
+
     const originalName = req.file.originalname;
     const outputPath = `uploads/encrypted_${Date.now()}_${originalName}.enc`;
     const output = fs.createWriteStream(outputPath);
 
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-    output.write(iv);
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    output.write(iv); // prepend IV
     input.pipe(cipher).pipe(output);
 
     output.on("finish", () => {
-      res.download(outputPath, "encrypted.enc", err => {
+      res.download(outputPath, `encrypted_${originalName}.enc`, (err) => {
         if (err) console.error(err);
         fs.unlinkSync(req.file.path);
         fs.unlinkSync(outputPath);
@@ -51,26 +50,23 @@ app.post("/api/encrypt", upload.single("file"), (req, res) => {
 
 app.post("/api/decrypt", upload.single("file"), (req, res) => {
   try {
-    const input = fs.createReadStream(req.file.path);
-    const chunks = [];
-    input.on("data", chunk => chunks.push(chunk));
-    input.on("end", () => {
-      const buffer = Buffer.concat(chunks);
-      const iv = buffer.slice(0, 16);
-      const encryptedData = buffer.slice(16);
-      const key = crypto.createHash("sha256").update(req.body.key).digest();
-      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    const key = crypto.createHash("sha256").update(req.body.key).digest();
+    const input = fs.readFileSync(req.file.path);
 
-      const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
-      const originalName = req.file.originalname.replace(/^encrypted_\d+_/, "").replace(".enc", "");
-      const outputPath = `uploads/decrypted_${Date.now()}_${originalName}`;
-      fs.writeFileSync(outputPath, decrypted);
+    const iv = input.slice(0, 16);
+    const encryptedData = input.slice(16);
 
-      res.download(outputPath, originalName, err => {
-        if (err) console.error(err);
-        fs.unlinkSync(req.file.path);
-        fs.unlinkSync(outputPath);
-      });
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+
+    const originalName = req.file.originalname.replace(/^encrypted_\d+_/, "").replace(".enc", "");
+    const outputPath = `uploads/decrypted_${Date.now()}_${originalName}`;
+    fs.writeFileSync(outputPath, decrypted);
+
+    res.download(outputPath, `decrypted_${originalName}`, (err) => {
+      if (err) console.error(err);
+      fs.unlinkSync(req.file.path);
+      fs.unlinkSync(outputPath);
     });
   } catch (err) {
     console.error(err);
@@ -79,7 +75,7 @@ app.post("/api/decrypt", upload.single("file"), (req, res) => {
 });
 
 // =====================================================
-// 📚 PDF MERGE TOOL (UNCHANGED)
+// 📚 PDF MERGE TOOL
 // =====================================================
 app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
   try {
@@ -89,8 +85,8 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
     const mergedPath = `uploads/merged_${Date.now()}.pdf`;
     await merger.save(mergedPath);
 
-    res.download(mergedPath, "merged.pdf", err => {
-      if (err) console.error(err);
+    res.download(mergedPath, "merged.pdf", (err) => {
+      if (err) console.error("Download error:", err);
       req.files.forEach(f => fs.unlinkSync(f.path));
       fs.unlinkSync(mergedPath);
     });
@@ -101,20 +97,17 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
 });
 
 // =====================================================
-// 🖼️ IMAGE CONVERTER TOOL (UPDATED)
+// 🖼️ IMAGE CONVERTER TOOL
 // =====================================================
 app.post("/api/convert", upload.single("image"), async (req, res) => {
   try {
     const { format } = req.body;
-    if (!req.file) return res.status(400).json({ error: "No image uploaded" });
-    if (!format) return res.status(400).json({ error: "No format specified" });
+    if (!format) return res.status(400).json({ error: "Target format required" });
 
-    const originalName = req.file.originalname.split(".")[0];
-    const outputPath = `uploads/converted_${Date.now()}_${originalName}.${format}`;
-
+    const outputPath = `uploads/converted_${Date.now()}.${format}`;
     await sharp(req.file.path).toFormat(format).toFile(outputPath);
 
-    res.download(outputPath, `converted.${format}`, err => {
+    res.download(outputPath, `converted.${format}`, (err) => {
       if (err) console.error(err);
       fs.unlinkSync(req.file.path);
       fs.unlinkSync(outputPath);
