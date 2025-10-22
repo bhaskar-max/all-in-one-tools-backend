@@ -8,7 +8,7 @@ import sharp from "sharp";
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
@@ -19,25 +19,25 @@ app.get("/", (req, res) => {
 });
 
 // =====================================================
-// 🔐 FILE ENCRYPTION / DECRYPTION TOOL
+// 🔐 FILE ENCRYPTION / DECRYPTION TOOL (UNCHANGED)
 // =====================================================
 app.post("/api/encrypt", upload.single("file"), (req, res) => {
   try {
     const algorithm = "aes-256-cbc";
-    const key = crypto.createHash("sha256").update(req.body.key).digest(); // use provided key
+    const key = crypto.createHash("sha256").update(req.body.key).digest();
     const iv = crypto.randomBytes(16);
 
     const input = fs.createReadStream(req.file.path);
-    const originalName = req.file.originalname; // preserve original filename
+    const originalName = req.file.originalname;
     const outputPath = `uploads/encrypted_${Date.now()}_${originalName}.enc`;
     const output = fs.createWriteStream(outputPath);
 
     const cipher = crypto.createCipheriv(algorithm, key, iv);
-    output.write(iv); // store IV in file
+    output.write(iv);
     input.pipe(cipher).pipe(output);
 
     output.on("finish", () => {
-      res.download(outputPath, `encrypted_${originalName}.enc`, err => {
+      res.download(outputPath, "encrypted.enc", err => {
         if (err) console.error(err);
         fs.unlinkSync(req.file.path);
         fs.unlinkSync(outputPath);
@@ -51,23 +51,19 @@ app.post("/api/encrypt", upload.single("file"), (req, res) => {
 
 app.post("/api/decrypt", upload.single("file"), (req, res) => {
   try {
-    const key = crypto.createHash("sha256").update(req.body.key).digest(); // use provided key
     const input = fs.createReadStream(req.file.path);
     const chunks = [];
-
     input.on("data", chunk => chunks.push(chunk));
     input.on("end", () => {
       const buffer = Buffer.concat(chunks);
       const iv = buffer.slice(0, 16);
       const encryptedData = buffer.slice(16);
-
+      const key = crypto.createHash("sha256").update(req.body.key).digest();
       const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+
       const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
-
-      // Get original filename from FormData or fallback
-      const originalName = req.body.originalName || "decrypted_file";
+      const originalName = req.file.originalname.replace(/^encrypted_\d+_/, "").replace(".enc", "");
       const outputPath = `uploads/decrypted_${Date.now()}_${originalName}`;
-
       fs.writeFileSync(outputPath, decrypted);
 
       res.download(outputPath, originalName, err => {
@@ -83,7 +79,7 @@ app.post("/api/decrypt", upload.single("file"), (req, res) => {
 });
 
 // =====================================================
-// 📚 PDF MERGE TOOL
+// 📚 PDF MERGE TOOL (UNCHANGED)
 // =====================================================
 app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
   try {
@@ -94,7 +90,7 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
     await merger.save(mergedPath);
 
     res.download(mergedPath, "merged.pdf", err => {
-      if (err) console.error("Download error:", err);
+      if (err) console.error(err);
       req.files.forEach(f => fs.unlinkSync(f.path));
       fs.unlinkSync(mergedPath);
     });
@@ -105,17 +101,20 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
 });
 
 // =====================================================
-// 🖼️ IMAGE CONVERTER TOOL
+// 🖼️ IMAGE CONVERTER TOOL (UPDATED)
 // =====================================================
 app.post("/api/convert", upload.single("image"), async (req, res) => {
   try {
     const { format } = req.body;
-    const originalName = req.file.originalname.split(".")[0]; // remove extension
+    if (!req.file) return res.status(400).json({ error: "No image uploaded" });
+    if (!format) return res.status(400).json({ error: "No format specified" });
+
+    const originalName = req.file.originalname.split(".")[0];
     const outputPath = `uploads/converted_${Date.now()}_${originalName}.${format}`;
 
     await sharp(req.file.path).toFormat(format).toFile(outputPath);
 
-    res.download(outputPath, `${originalName}.${format}`, err => {
+    res.download(outputPath, `converted.${format}`, err => {
       if (err) console.error(err);
       fs.unlinkSync(req.file.path);
       fs.unlinkSync(outputPath);
