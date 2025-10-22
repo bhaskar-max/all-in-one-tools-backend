@@ -10,16 +10,15 @@ const app = express();
 const upload = multer({ dest: "uploads/" });
 const PORT = 4000;
 
-// ===== ENABLE FULL CORS (Safe for all browsers / file:// frontend) =====
+// ===== MIDDLEWARE =====
 app.use(cors());
 app.use(express.json());
+
+// Full CORS headers (optional for strict browser setups)
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE");
   res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
   next();
 });
 
@@ -32,17 +31,20 @@ app.get("/", (req, res) => {
 // 🔐 FILE ENCRYPTION / DECRYPTION TOOL
 // =====================================================
 app.post("/api/encrypt", upload.single("file"), (req, res) => {
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: "Encryption key is required" });
+
   try {
     const algorithm = "aes-256-cbc";
-    const key = crypto.createHash("sha256").update("my-secret-key").digest();
+    const derivedKey = crypto.createHash("sha256").update(key).digest();
     const iv = crypto.randomBytes(16);
 
     const input = fs.createReadStream(req.file.path);
     const outputPath = `uploads/encrypted_${Date.now()}.enc`;
     const output = fs.createWriteStream(outputPath);
 
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-    output.write(iv); // store IV in file
+    const cipher = crypto.createCipheriv(algorithm, derivedKey, iv);
+    output.write(iv); // prepend IV
     input.pipe(cipher).pipe(output);
 
     output.on("finish", () => {
@@ -59,12 +61,13 @@ app.post("/api/encrypt", upload.single("file"), (req, res) => {
 });
 
 app.post("/api/decrypt", upload.single("file"), (req, res) => {
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: "Decryption key is required" });
+
   try {
     const input = fs.createReadStream(req.file.path);
-    const outputPath = `uploads/decrypted_${Date.now()}.bin`;
-    const output = fs.createWriteStream(outputPath);
-
     const chunks = [];
+
     input.on("data", (chunk) => chunks.push(chunk));
     input.on("end", () => {
       const buffer = Buffer.concat(chunks);
@@ -72,13 +75,11 @@ app.post("/api/decrypt", upload.single("file"), (req, res) => {
       const encryptedData = buffer.slice(16);
 
       const algorithm = "aes-256-cbc";
-      const key = crypto.createHash("sha256").update("my-secret-key").digest();
-      const decipher = crypto.createDecipheriv(algorithm, key, iv);
+      const derivedKey = crypto.createHash("sha256").update(key).digest();
+      const decipher = crypto.createDecipheriv(algorithm, derivedKey, iv);
 
-      const decrypted = Buffer.concat([
-        decipher.update(encryptedData),
-        decipher.final(),
-      ]);
+      const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+      const outputPath = `uploads/decrypted_${Date.now()}.bin`;
       fs.writeFileSync(outputPath, decrypted);
 
       res.download(outputPath, "decrypted_file", (err) => {
@@ -105,7 +106,7 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
     await merger.save(mergedPath);
 
     res.download(mergedPath, "merged.pdf", (err) => {
-      if (err) console.error("Download error:", err);
+      if (err) console.error(err);
       req.files.forEach((f) => fs.unlinkSync(f.path));
       fs.unlinkSync(mergedPath);
     });
@@ -121,8 +122,9 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
 app.post("/api/convert", upload.single("image"), async (req, res) => {
   try {
     const { format } = req.body;
-    const outputPath = `uploads/converted_${Date.now()}.${format}`;
+    if (!format) return res.status(400).json({ error: "Target format is required" });
 
+    const outputPath = `uploads/converted_${Date.now()}.${format}`;
     await sharp(req.file.path).toFormat(format).toFile(outputPath);
 
     res.download(outputPath, `converted.${format}`, (err) => {
