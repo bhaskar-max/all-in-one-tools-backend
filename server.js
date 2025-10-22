@@ -10,17 +10,8 @@ const app = express();
 const upload = multer({ dest: "uploads/" });
 const PORT = 4000;
 
-// ===== MIDDLEWARE =====
 app.use(cors());
 app.use(express.json());
-
-// Full CORS headers (optional for strict browser setups)
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  next();
-});
 
 // ===== TEST ROUTE =====
 app.get("/", (req, res) => {
@@ -31,24 +22,22 @@ app.get("/", (req, res) => {
 // 🔐 FILE ENCRYPTION / DECRYPTION TOOL
 // =====================================================
 app.post("/api/encrypt", upload.single("file"), (req, res) => {
-  const { key } = req.body;
-  if (!key) return res.status(400).json({ error: "Encryption key is required" });
-
   try {
     const algorithm = "aes-256-cbc";
-    const derivedKey = crypto.createHash("sha256").update(key).digest();
+    const key = crypto.createHash("sha256").update(req.body.key).digest(); // use provided key
     const iv = crypto.randomBytes(16);
 
     const input = fs.createReadStream(req.file.path);
-    const outputPath = `uploads/encrypted_${Date.now()}.enc`;
+    const originalName = req.file.originalname; // preserve original filename
+    const outputPath = `uploads/encrypted_${Date.now()}_${originalName}.enc`;
     const output = fs.createWriteStream(outputPath);
 
-    const cipher = crypto.createCipheriv(algorithm, derivedKey, iv);
-    output.write(iv); // prepend IV
+    const cipher = crypto.createCipheriv(algorithm, key, iv);
+    output.write(iv); // store IV in file
     input.pipe(cipher).pipe(output);
 
     output.on("finish", () => {
-      res.download(outputPath, "encrypted.enc", (err) => {
+      res.download(outputPath, `encrypted_${originalName}.enc`, err => {
         if (err) console.error(err);
         fs.unlinkSync(req.file.path);
         fs.unlinkSync(outputPath);
@@ -61,28 +50,27 @@ app.post("/api/encrypt", upload.single("file"), (req, res) => {
 });
 
 app.post("/api/decrypt", upload.single("file"), (req, res) => {
-  const { key } = req.body;
-  if (!key) return res.status(400).json({ error: "Decryption key is required" });
-
   try {
+    const key = crypto.createHash("sha256").update(req.body.key).digest(); // use provided key
     const input = fs.createReadStream(req.file.path);
     const chunks = [];
 
-    input.on("data", (chunk) => chunks.push(chunk));
+    input.on("data", chunk => chunks.push(chunk));
     input.on("end", () => {
       const buffer = Buffer.concat(chunks);
       const iv = buffer.slice(0, 16);
       const encryptedData = buffer.slice(16);
 
-      const algorithm = "aes-256-cbc";
-      const derivedKey = crypto.createHash("sha256").update(key).digest();
-      const decipher = crypto.createDecipheriv(algorithm, derivedKey, iv);
-
+      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
       const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
-      const outputPath = `uploads/decrypted_${Date.now()}.bin`;
+
+      // Get original filename from FormData or fallback
+      const originalName = req.body.originalName || "decrypted_file";
+      const outputPath = `uploads/decrypted_${Date.now()}_${originalName}`;
+
       fs.writeFileSync(outputPath, decrypted);
 
-      res.download(outputPath, "decrypted_file", (err) => {
+      res.download(outputPath, originalName, err => {
         if (err) console.error(err);
         fs.unlinkSync(req.file.path);
         fs.unlinkSync(outputPath);
@@ -105,9 +93,9 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
     const mergedPath = `uploads/merged_${Date.now()}.pdf`;
     await merger.save(mergedPath);
 
-    res.download(mergedPath, "merged.pdf", (err) => {
-      if (err) console.error(err);
-      req.files.forEach((f) => fs.unlinkSync(f.path));
+    res.download(mergedPath, "merged.pdf", err => {
+      if (err) console.error("Download error:", err);
+      req.files.forEach(f => fs.unlinkSync(f.path));
       fs.unlinkSync(mergedPath);
     });
   } catch (err) {
@@ -122,12 +110,12 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
 app.post("/api/convert", upload.single("image"), async (req, res) => {
   try {
     const { format } = req.body;
-    if (!format) return res.status(400).json({ error: "Target format is required" });
+    const originalName = req.file.originalname.split(".")[0]; // remove extension
+    const outputPath = `uploads/converted_${Date.now()}_${originalName}.${format}`;
 
-    const outputPath = `uploads/converted_${Date.now()}.${format}`;
     await sharp(req.file.path).toFormat(format).toFile(outputPath);
 
-    res.download(outputPath, `converted.${format}`, (err) => {
+    res.download(outputPath, `${originalName}.${format}`, err => {
       if (err) console.error(err);
       fs.unlinkSync(req.file.path);
       fs.unlinkSync(outputPath);
