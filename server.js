@@ -5,6 +5,7 @@ import fs from "fs";
 import crypto from "crypto";
 import PDFMerger from "pdf-merger-js";
 import sharp from "sharp";
+import fetch from "node-fetch"; // for AI Chat proxy
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
@@ -87,7 +88,7 @@ app.post("/api/pdf/merge", upload.array("pdfs"), async (req, res) => {
 
     res.download(mergedPath, "merged.pdf", (err) => {
       if (err) console.error("Download error:", err);
-      req.files.forEach(f => fs.unlinkSync(f.path));
+      req.files.forEach((f) => fs.unlinkSync(f.path));
       fs.unlinkSync(mergedPath);
     });
   } catch (err) {
@@ -115,6 +116,41 @@ app.post("/api/convert", upload.single("image"), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Conversion failed" });
+  }
+});
+
+// =====================================================
+// 💬 AI CHAT TOOL (OpenAI Proxy Route)
+// =====================================================
+app.post("/api/chat", express.json(), async (req, res) => {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return res.status(400).send("OpenAI API key not configured on backend.");
+
+  const prompt = req.body.prompt || "";
+  if (!prompt) return res.status(400).send("Prompt required.");
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 600,
+      }),
+    });
+
+    const data = await resp.json();
+    const text =
+      (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ||
+      JSON.stringify(data);
+    res.json({ text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("AI proxy failed");
   }
 });
 
