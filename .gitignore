@@ -1,3 +1,18 @@
-"node_modules/" 
-".env" 
-".env" 
+# Node dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Uploaded or temporary files
+uploads/
+temp/
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE and editor settings
+.vscode/
+.idea/
